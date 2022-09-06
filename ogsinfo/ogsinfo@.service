@@ -1,0 +1,12 @@
+[Unit]
+Description=Display Odroid Go Super specific system information directly on the framebuffer.
+
+[Service]
+Type=forking
+PIDFile=/var/run/ogsinfo%i.pid
+ExecStart=/usr/local/bin/ogsinfo --daemon --device /dev/fb%i --pidfile /var/run/ogsinfo%i.pid
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
