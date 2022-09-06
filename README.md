@@ -15,14 +15,14 @@ The library itself.
 # test
 A simple test programs
 
-# [osginfo](osginfo/README.md)
+# [osginfo](https://github.com/AndrewFromMelbourne/ogsfb32/blob/main/ogsinfo/README.md)
 A program to display Odroid Go Super specific system information directly on
 the framebuffer.
 
-# [Life](life/README.md)
+# [Life](https://github.com/AndrewFromMelbourne/ogsfb32/blob/main/life/README.md)
 Conway's Game of Life
 
-# [Boxworld](boxworld/README.md)
+# [Boxworld](https://github.com/AndrewFromMelbourne/ogsfb32/blob/main/boxworld/README.md)
 A version of Boxworld or Sokoban for the Odroid Super Go, written in C++.
 
 # build
