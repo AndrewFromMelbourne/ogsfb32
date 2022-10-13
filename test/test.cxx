@@ -60,8 +60,7 @@ main()
 {
     try
     {
-        FrameBuffer8880 fb{"/dev/fb0"};
-        fb.cursor(0);
+        FrameBuffer8880 fb{"/dev/dri/card0"};
         fb.clear();
 
         //-----------------------------------------------------------------
@@ -130,7 +129,6 @@ main()
         sleep(10);
 
         fb.clear();
-        fb.cursor(1);
     }
     catch (std::exception& error)
     {

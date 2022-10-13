@@ -62,7 +62,7 @@ namespace
 volatile static std::sig_atomic_t run = 1;
 volatile static std::sig_atomic_t display = 1;
 
-const char* defaultDevice = "/dev/fb0";
+const char* defaultDevice = "/dev/dri/card0";
 }
 
 //-------------------------------------------------------------------------
@@ -76,7 +76,7 @@ messageLog(
 {
     if (isDaemon)
     {
-        ::syslog(LOG_MAKEPRI(LOG_USER, priority), message.c_str());
+        ::syslog(LOG_MAKEPRI(LOG_USER, priority), "%s", message.c_str());
     }
     else
     {
@@ -142,7 +142,7 @@ printUsage(
     os << "Usage: " << name << " <options>\n";
     os << "\n";
     os << "    --daemon,-D - start in the background as a daemon\n";
-    os << "    --device,-d - framebuffer device to use";
+    os << "    --device,-d - dri device to use";
     os << " (default is " << defaultDevice << ")\n";
     os << "    --help,-h - print usage and exit\n";
     os << "    --pidfile,-p <pidfile> - create and lock PID file";
@@ -311,7 +311,6 @@ main(
     {
         ogsfb32::FrameBuffer8880 fb(device);
 
-        fb.cursor(0);
         fb.clear(ogsfb32::RGB8880{0, 0, 0});
 
         //-----------------------------------------------------------------
@@ -382,7 +381,6 @@ main(
         }
 
         fb.clear();
-        fb.cursor(1);
     }
     catch (std::exception& error)
     {

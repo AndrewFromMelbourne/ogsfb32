@@ -33,8 +33,6 @@
 #include <string>
 #include <utility>
 
-#include <linux/fb.h>
-
 #include "point.h"
 #include "fileDescriptor.h"
 #include "rgb8880.h"
@@ -70,10 +68,8 @@ public:
     FrameBuffer8880(FrameBuffer8880&& fb) = delete;
     FrameBuffer8880& operator=(FrameBuffer8880&& fb) = delete;
 
-    int32_t getWidth() const { return m_vinfo.yres; }
-    int32_t getHeight() const { return m_vinfo.xres; }
-
-    bool cursor(int value);
+    int32_t getWidth() const { return m_width; }
+    int32_t getHeight() const { return m_height; }
 
     void clear(const RGB8880& rgb) const { clear(rgb.get8880()); }
     void clear(uint32_t rgb = 0) const;
@@ -105,18 +101,21 @@ private:
     {
         return (p.x() >= 0) &&
                (p.y() >= 0) &&
-               (p.x() < static_cast<int32_t>(m_vinfo.yres)) &&
-               (p.y() < static_cast<int32_t>(m_vinfo.xres));
+               (p.x() < static_cast<int32_t>(m_width)) &&
+               (p.y() < static_cast<int32_t>(m_height));
     }
 
     size_t offset(const FB8880Point& p) const;
 
-    struct fb_fix_screeninfo m_finfo;
-    struct fb_var_screeninfo m_vinfo;
-
+    uint32_t m_width;
+    uint32_t m_height;
+    uint32_t m_length;
     int32_t m_lineLengthPixels;
 
+    FileDescriptor m_fbfd;
     uint32_t* m_fbp;
+    uint32_t m_fbId;
+    uint32_t m_fbHandle;
 };
 
 //-------------------------------------------------------------------------

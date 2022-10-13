@@ -31,17 +31,20 @@
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <linux/fb.h>
-#include <linux/kd.h>
+#include <xf86drm.h>
+#include <xf86drmMode.h>
+#include <libdrm/drm_fourcc.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <system_error>
 
+#include "drmUtil.h"
 #include "framebuffer8880.h"
 #include "image8880.h"
 #include "point.h"
@@ -51,80 +54,185 @@
 ogsfb32::FrameBuffer8880:: FrameBuffer8880(
     const std::string& device)
 :
-    m_finfo{},
-    m_vinfo{},
+    m_width{0},
+    m_height{0},
+    m_length{0},
     m_lineLengthPixels{0},
-    m_fbp{nullptr}
+    m_fbfd{::open(device.c_str(), O_RDWR)},
+    m_fbp{nullptr},
+    m_fbId{0},
+    m_fbHandle{0}
 {
-    FileDescriptor fbfd{::open(device.c_str(), O_RDWR)};
-
-    if (fbfd.fd() == -1)
+    if (m_fbfd.fd() == -1)
     {
         throw std::system_error{errno,
-                                std::system_category(), 
-                                "cannot open framebuffer device " + device};
-    }
-
-    if (ioctl(fbfd.fd(), FBIOGET_FSCREENINFO, &(m_finfo)) == -1)
-    {
-        throw std::system_error{errno,
-                                std::system_category(), 
-                                "reading fixed framebuffer information"};
-    }
-
-    if (ioctl(fbfd.fd(), FBIOGET_VSCREENINFO, &(m_vinfo)) == -1)
-    {
-        throw std::system_error{errno,
-                                std::system_category(), 
-                                "reading variable framebuffer information"};
+                                std::system_category(),
+                                "cannot open dri device " + device};
     }
 
     //---------------------------------------------------------------------
 
-    m_lineLengthPixels = m_finfo.line_length / bytesPerPixel;
+    uint64_t hasDumb;
+    if ((drmGetCap(m_fbfd.fd(), DRM_CAP_DUMB_BUFFER, &hasDumb) < 0) or not hasDumb)
+    {
+        throw std::system_error{errno,
+                                std::system_category(),
+                                "no DRM dumb buffer capability"};
+    }
 
     //---------------------------------------------------------------------
 
-    void* fbp = ::mmap(nullptr,
-                       m_finfo.smem_len,
-                       PROT_READ | PROT_WRITE,
-                       MAP_SHARED,
-                       fbfd.fd(),
-                       0);
+    auto resources = drm::drmModeGetResources(m_fbfd);
+
+    //---------------------------------------------------------------------
+
+    bool crtcFound = false;
+    uint32_t crtcId = 0;
+    uint32_t connectorId = 0;
+    drmModeModeInfo mode;
+
+    for (int i = 0 ; i < resources->count_connectors ; ++i)
+    {
+        auto connector = drm::drmModeGetConnector(m_fbfd, resources->connectors[i]);
+
+        if ((connector->connection == DRM_MODE_CONNECTED) and
+            (connector->count_modes > 0))
+        {
+            for (int j = 0 ; j < resources->count_encoders ; ++j)
+            {
+                auto encoder = drm::drmModeGetEncoder(m_fbfd, resources->encoders[j]);
+
+                for (int k = 0 ; k < resources->count_crtcs ; ++k)
+                {
+                    auto crtc = drm::drmModeGetCrtc(m_fbfd, resources->crtcs[k]);
+
+                    uint32_t currentCrtc = 1 << k;
+
+                    if (encoder->possible_crtcs & currentCrtc)
+                    {
+                        crtcFound = true;
+                        crtcId = resources->crtcs[k];
+                        connectorId = resources->connectors[i];
+                        mode = crtc->mode;
+                        break;
+                    }
+                }
+
+                if (crtcFound)
+                {
+                    break;
+                }
+            }
+        }
+
+        if (crtcFound)
+        {
+            break;
+        }
+    }
+
+    if (not crtcFound)
+    {
+        throw std::logic_error("no connected CRTC found");
+    }
+
+    //---------------------------------------------------------------------
+
+    m_width = mode.vdisplay;
+    m_height = mode.hdisplay;
+
+    struct drm_mode_create_dumb dmcb =
+    {
+        .height = mode.vdisplay,
+        .width = mode.hdisplay,
+        .bpp = 32,
+        .flags = 0,
+        .handle = 0,
+        .pitch = 0,
+        .size = 0
+    };
+
+    if (drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_CREATE_DUMB, &dmcb) < 0)
+    {
+        throw std::system_error{errno,
+                                std::system_category(),
+                                "Cannot create a DRM dumb buffer"};
+    }
+
+    //---------------------------------------------------------------------
+
+    m_length = dmcb.size;
+    m_lineLengthPixels = dmcb.pitch / bytesPerPixel;
+    m_fbHandle = dmcb.handle;
+
+    uint32_t handles[4] = { dmcb.handle };
+    uint32_t strides[4] = { dmcb.pitch };
+    uint32_t offsets[4] = { 0 };
+
+    if (drmModeAddFB2(
+            m_fbfd.fd(),
+            mode.hdisplay,
+            mode.vdisplay,
+            DRM_FORMAT_XRGB8888,
+            handles,
+            strides,
+            offsets,
+            &m_fbId,
+            0) < 0)
+    {
+        throw std::system_error{errno,
+                                std::system_category(),
+                                "Cannot add frame buffer"};
+    }
+
+    //---------------------------------------------------------------------
+
+    struct drm_mode_map_dumb dmmd =
+    {
+        .handle = m_fbHandle
+    };
+
+    if (drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_MAP_DUMB, &dmmd) < 0)
+    {
+        throw std::system_error{errno,
+                                std::system_category(),
+                                "Cannot map dumb buffer"};
+    }
+
+    void* fbp = mmap(0, m_length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fbfd.fd(), dmmd.offset);
 
     if (fbp == MAP_FAILED)
     {
         throw std::system_error(errno,
-                                std::system_category(), 
+                                std::system_category(),
                                 "mapping framebuffer device to memory");
     }
 
     m_fbp = static_cast<uint32_t*>(fbp);
+
+    //---------------------------------------------------------------------
+
+    if (drmModeSetCrtc(m_fbfd.fd(), crtcId, m_fbId, 0, 0, &connectorId, 1, &mode) < 0)
+    {
+        throw std::system_error(errno,
+                                std::system_category(),
+                                "unable to set crtc with frame buffer");
+    }
 }
 
 //-------------------------------------------------------------------------
 
 ogsfb32::FrameBuffer8880:: ~FrameBuffer8880()
 {
-    ::munmap(m_fbp, m_finfo.smem_len);
-}
+    ::munmap(m_fbp, m_length);
+    drmModeRmFB(m_fbfd.fd(), m_fbId);
 
-//-------------------------------------------------------------------------
-
-bool
-ogsfb32::FrameBuffer8880:: cursor(int value)
-{
-    std::ofstream ofs("/sys/class/graphics/fbcon/cursor_blink");
-
-    bool result = false;
-
-    if (ofs.is_open())
+    struct drm_mode_destroy_dumb dmdd =
     {
-        ofs << value;
-        result = true;
-    }
+        .handle = m_fbHandle
+    };
 
-    return result;
+    drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
 }
 
 //-------------------------------------------------------------------------
@@ -133,7 +241,7 @@ void
 ogsfb32::FrameBuffer8880:: clear(
     uint32_t rgb) const
 {
-    std::fill(m_fbp, m_fbp + (m_finfo.smem_len / bytesPerPixel), rgb);
+    std::fill(m_fbp, m_fbp + (m_length / bytesPerPixel), rgb);
 }
 
 //-------------------------------------------------------------------------
@@ -197,13 +305,13 @@ ogsfb32::FrameBuffer8880:: putImage(
     FB8880Point p{ getWidth() - image.getWidth() - p_left.x(), p_left.y() };
 
     if ((p.x() < 0) ||
-        ((p.x() + image.getWidth()) > static_cast<int32_t>(m_vinfo.yres)))
+        ((p.x() + image.getWidth()) > static_cast<int32_t>(m_width)))
     {
         return putImagePartial(p, image);
     }
 
     if ((p.y() < 0) ||
-        ((p.y() + image.getHeight()) > static_cast<int32_t>(m_vinfo.xres)))
+        ((p.y() + image.getHeight()) > static_cast<int32_t>(m_height)))
     {
         return putImagePartial(p, image);
     }
@@ -213,7 +321,7 @@ ogsfb32::FrameBuffer8880:: putImage(
         auto start = image.getColumn(i);
 
         std::copy(start,
-                  start + image.getHeight(), 
+                  start + image.getHeight(),
                   m_fbp + ((i + p.x()) * m_lineLengthPixels) + p.y());
     }
 
@@ -242,9 +350,9 @@ ogsfb32::FrameBuffer8880:: putImagePartial(
     }
 
     if ((x - xStart + image.getWidth()) >
-        static_cast<int32_t>(m_vinfo.yres))
+        static_cast<int32_t>(m_width))
     {
-        xEnd = m_vinfo.yres - 1 - (x - xStart);
+        xEnd = m_height - 1 - (x - xStart);
     }
 
     if (y < 0)
@@ -254,9 +362,9 @@ ogsfb32::FrameBuffer8880:: putImagePartial(
     }
 
     if ((y - yStart + image.getHeight()) >
-        static_cast<int32_t>(m_vinfo.xres))
+        static_cast<int32_t>(m_height))
     {
-        yEnd = m_vinfo.xres - 1 - (y - yStart);
+        yEnd = m_height - 1 - (y - yStart);
     }
 
     if ((xEnd - xStart) <= 0)
@@ -287,5 +395,5 @@ size_t
 ogsfb32::FrameBuffer8880:: offset(
     const FB8880Point& p) const
 {
-    return p.y() + (m_vinfo.yres - 1 - p.x()) * m_lineLengthPixels;
+    return p.y() + (m_width - 1 - p.x()) * m_lineLengthPixels;
 }

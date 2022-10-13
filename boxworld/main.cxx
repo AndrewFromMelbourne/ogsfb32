@@ -46,7 +46,7 @@ using namespace ogsfb32;
 namespace
 {
 volatile static std::sig_atomic_t run = 1;
-const char* defaultDevice = "/dev/fb0";
+const char* defaultDevice = "/dev/dri/card0";
 }
 
 //-------------------------------------------------------------------------
@@ -59,7 +59,7 @@ printUsage(
     os << "\n";
     os << "Usage: " << name << " <options>\n";
     os << "\n";
-    os << "    --device,-d - framebuffer device to use";
+    os << "    --device,-d - dri device to use";
     os << " (default is " << defaultDevice << ")\n";
     os << "    --help,-h - print usage and exit\n";
     os << "\n";
@@ -119,7 +119,6 @@ main(
     {
         Joystick js;
         FrameBuffer8880 fb(device);
-        fb.cursor(0);
         fb.clear(RGB8880{0, 0, 0});
 
         Boxworld boxworld;
@@ -146,7 +145,6 @@ main(
         }
 
         fb.clear();
-        fb.cursor(1);
     }
     catch (std::exception& error)
     {
