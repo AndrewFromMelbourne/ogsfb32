@@ -49,7 +49,60 @@
 #include "image8880.h"
 #include "point.h"
 
+//=========================================================================
+
+namespace
+{
+
 //-------------------------------------------------------------------------
+
+bool
+findDrmResources(
+    ogsfb32::FileDescriptor& fd,
+    uint32_t& crtcId,
+    uint32_t& connectorId,
+    drmModeModeInfo& mode)
+{
+    auto resources = drm::drmModeGetResources(fd);
+    bool resourcesFound = false;
+
+    for (int i = 0 ; (i < resources->count_connectors) and not resourcesFound ; ++i)
+    {
+        connectorId = resources->connectors[i];
+        auto connector = drm::drmModeGetConnector(fd, connectorId);
+        const bool connected = (connector->connection == DRM_MODE_CONNECTED);
+
+        if (connected and (connector->count_modes > 0))
+        {
+            for (int j = 0 ; (j < resources->count_encoders) and not resourcesFound ; ++j)
+            {
+                uint32_t encoderId = resources->encoders[j];
+                auto encoder = drm::drmModeGetEncoder(fd, encoderId);
+
+                for (int k = 0 ; (k < resources->count_crtcs) and not resourcesFound ; ++k)
+                {
+                    uint32_t currentCrtc = 1 << k;
+
+                    if (encoder->possible_crtcs & currentCrtc)
+                    {
+                        crtcId = resources->crtcs[k];
+                        auto crtc = drm::drmModeGetCrtc(fd, crtcId);
+                        mode = crtc->mode;
+                        resourcesFound = true;
+                    }
+                }
+            }
+        }
+    }
+
+    return resourcesFound;
+}
+
+//-------------------------------------------------------------------------
+
+}
+
+//=========================================================================
 
 ogsfb32::FrameBuffer8880:: FrameBuffer8880(
     const std::string& device)
@@ -58,12 +111,12 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
     m_height{0},
     m_length{0},
     m_lineLengthPixels{0},
-    m_fbfd{::open(device.c_str(), O_RDWR)},
+    m_fd{::open(device.c_str(), O_RDWR)},
     m_fbp{nullptr},
     m_fbId{0},
     m_fbHandle{0}
 {
-    if (m_fbfd.fd() == -1)
+    if (m_fd.fd() == -1)
     {
         throw std::system_error{errno,
                                 std::system_category(),
@@ -73,7 +126,7 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
     //---------------------------------------------------------------------
 
     uint64_t hasDumb;
-    if ((drmGetCap(m_fbfd.fd(), DRM_CAP_DUMB_BUFFER, &hasDumb) < 0) or not hasDumb)
+    if ((drmGetCap(m_fd.fd(), DRM_CAP_DUMB_BUFFER, &hasDumb) < 0) or not hasDumb)
     {
         throw std::system_error{errno,
                                 std::system_category(),
@@ -82,56 +135,11 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
 
     //---------------------------------------------------------------------
 
-    auto resources = drm::drmModeGetResources(m_fbfd);
-
-    //---------------------------------------------------------------------
-
-    bool crtcFound = false;
     uint32_t crtcId = 0;
     uint32_t connectorId = 0;
     drmModeModeInfo mode;
 
-    for (int i = 0 ; i < resources->count_connectors ; ++i)
-    {
-        auto connector = drm::drmModeGetConnector(m_fbfd, resources->connectors[i]);
-
-        if ((connector->connection == DRM_MODE_CONNECTED) and
-            (connector->count_modes > 0))
-        {
-            for (int j = 0 ; j < resources->count_encoders ; ++j)
-            {
-                auto encoder = drm::drmModeGetEncoder(m_fbfd, resources->encoders[j]);
-
-                for (int k = 0 ; k < resources->count_crtcs ; ++k)
-                {
-                    auto crtc = drm::drmModeGetCrtc(m_fbfd, resources->crtcs[k]);
-
-                    uint32_t currentCrtc = 1 << k;
-
-                    if (encoder->possible_crtcs & currentCrtc)
-                    {
-                        crtcFound = true;
-                        crtcId = resources->crtcs[k];
-                        connectorId = resources->connectors[i];
-                        mode = crtc->mode;
-                        break;
-                    }
-                }
-
-                if (crtcFound)
-                {
-                    break;
-                }
-            }
-        }
-
-        if (crtcFound)
-        {
-            break;
-        }
-    }
-
-    if (not crtcFound)
+    if (not findDrmResources(m_fd, crtcId, connectorId, mode))
     {
         throw std::logic_error("no connected CRTC found");
     }
@@ -152,7 +160,7 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
         .size = 0
     };
 
-    if (drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_CREATE_DUMB, &dmcb) < 0)
+    if (drmIoctl(m_fd.fd(), DRM_IOCTL_MODE_CREATE_DUMB, &dmcb) < 0)
     {
         throw std::system_error{errno,
                                 std::system_category(),
@@ -170,7 +178,7 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
     uint32_t offsets[4] = { 0 };
 
     if (drmModeAddFB2(
-            m_fbfd.fd(),
+            m_fd.fd(),
             mode.hdisplay,
             mode.vdisplay,
             DRM_FORMAT_XRGB8888,
@@ -192,14 +200,14 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
         .handle = m_fbHandle
     };
 
-    if (drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_MAP_DUMB, &dmmd) < 0)
+    if (drmIoctl(m_fd.fd(), DRM_IOCTL_MODE_MAP_DUMB, &dmmd) < 0)
     {
         throw std::system_error{errno,
                                 std::system_category(),
                                 "Cannot map dumb buffer"};
     }
 
-    void* fbp = mmap(0, m_length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fbfd.fd(), dmmd.offset);
+    void* fbp = mmap(0, m_length, PROT_READ | PROT_WRITE, MAP_SHARED, m_fd.fd(), dmmd.offset);
 
     if (fbp == MAP_FAILED)
     {
@@ -212,7 +220,7 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
 
     //---------------------------------------------------------------------
 
-    if (drmModeSetCrtc(m_fbfd.fd(), crtcId, m_fbId, 0, 0, &connectorId, 1, &mode) < 0)
+    if (drmModeSetCrtc(m_fd.fd(), crtcId, m_fbId, 0, 0, &connectorId, 1, &mode) < 0)
     {
         throw std::system_error(errno,
                                 std::system_category(),
@@ -225,14 +233,14 @@ ogsfb32::FrameBuffer8880:: FrameBuffer8880(
 ogsfb32::FrameBuffer8880:: ~FrameBuffer8880()
 {
     ::munmap(m_fbp, m_length);
-    drmModeRmFB(m_fbfd.fd(), m_fbId);
+    drmModeRmFB(m_fd.fd(), m_fbId);
 
     struct drm_mode_destroy_dumb dmdd =
     {
         .handle = m_fbHandle
     };
 
-    drmIoctl(m_fbfd.fd(), DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
+    drmIoctl(m_fd.fd(), DRM_IOCTL_MODE_DESTROY_DUMB, &dmdd);
 }
 
 //-------------------------------------------------------------------------

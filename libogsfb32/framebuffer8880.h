@@ -112,7 +112,7 @@ private:
     uint32_t m_length;
     int32_t m_lineLengthPixels;
 
-    FileDescriptor m_fbfd;
+    FileDescriptor m_fd;
     uint32_t* m_fbp;
     uint32_t m_fbId;
     uint32_t m_fbHandle;
