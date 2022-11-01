@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "fileDescriptor.h"
+#include "linuxRelease.h"
 
 //-------------------------------------------------------------------------
 
@@ -64,6 +65,7 @@ class Joystick
 {
 public:
 
+#if defined(DEBIAN)
     enum Buttons
     {
         BUTTON_B = 0,
@@ -85,6 +87,29 @@ public:
         BUTTON_LEFT_SHOULDER_INNER = 16,
         BUTTON_RIGHT_SHOULDER_INNER = 17
     };
+#elif  defined(UBUNTU) 
+    enum Buttons
+    {
+        BUTTON_B = 0,
+        BUTTON_A = 1,
+        BUTTON_X = 2,
+        BUTTON_Y = 3,
+        BUTTON_LEFT_SHOULDER_OUTER = 4,
+        BUTTON_RIGHT_SHOULDER_OUTER = 5,
+        BUTTON_LEFT_SHOULDER_INNER = 6,
+        BUTTON_RIGHT_SHOULDER_INNER = 7,
+        BUTTON_DPAD_UP = 8,
+        BUTTON_DPAD_DOWN = 9,
+        BUTTON_DPAD_LEFT = 10,
+        BUTTON_DPAD_RIGHT = 11,
+        BUTTON_TOP_LEFT = 12,
+        BUTTON_TOP_RIGHT = 13,
+        BUTTON_BOTTOM_LEFT_OUTER = 14,
+        BUTTON_BOTTOM_LEFT_INNER = 15,
+        BUTTON_BOTTOM_RIGHT_INNER = 16,
+        BUTTON_BOTTOM_RIGHT_OUTER = 17
+    };
+#endif
 
     explicit Joystick(bool blocking = false);
     Joystick(const std::string& device, bool blocking = false);

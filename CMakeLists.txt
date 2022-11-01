@@ -13,6 +13,14 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin)
 
 #--------------------------------------------------------------------------
 
+add_custom_target(which_release
+                  COMMAND ${CMAKE_SOURCE_DIR}/scripts/which_release.sh
+                  WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/libogsfb32
+                  COMMENT "Determining Linux release")
+
+
+#--------------------------------------------------------------------------
+
 add_library(ogsfb32 STATIC libogsfb32/drmUtil.cxx
                            libogsfb32/fileDescriptor.cxx
                            libogsfb32/framebuffer8880.cxx
@@ -26,6 +34,7 @@ include_directories(${PROJECT_SOURCE_DIR}/libogsfb32)
 target_include_directories(ogsfb32 PUBLIC ${DRM_INCLUDE_DIRS})
 target_compile_options(ogsfb32 PUBLIC ${DRM_CFLAGS_OTHER})
 target_link_libraries(ogsfb32 ${DRM_LIBRARIES})
+add_dependencies(ogsfb32 which_release)
 
 set(EXTRA_LIBS ${EXTRA_LIBS} ogsfb32)
 
